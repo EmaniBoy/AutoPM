@@ -1,0 +1,3 @@
+ # PDFs, slides, images
+
+ delete this file when there is real data in this directory
