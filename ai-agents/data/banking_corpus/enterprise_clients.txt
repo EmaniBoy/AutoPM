@@ -1,0 +1,5 @@
+Enterprise Banking – Client Requests
+
+• 42 open API onboarding tickets; median time-to-first-call 18 days.
+• Missing bulk payment upload, webhook retries, and better API docs.
+• 3 clients paused rollout due to audit requirements; need SOC2 mapping and data lineage.
