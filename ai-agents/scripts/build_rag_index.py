@@ -33,7 +33,17 @@ def chunk_text(text, size=800, overlap=150):
 if __name__ == "__main__":
     # Get the ai-agents directory (parent of scripts)
     ai_agents_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Check banking_corpus first, then fall back to raw
+    corpus_dir = os.path.join(ai_agents_dir, "data", "banking_corpus")
     raw_dir = os.path.join(ai_agents_dir, "data", "raw")
+    
+    # Prefer banking_corpus if it exists and has files, otherwise use raw
+    if os.path.exists(corpus_dir):
+        files_corpus = [f for f in os.listdir(corpus_dir) if f.endswith(".txt")]
+        if files_corpus:
+            raw_dir = corpus_dir
+            print(f"📂 Using banking_corpus directory")
     
     if not os.path.exists(raw_dir):
         print(f"⚠️  Directory '{raw_dir}' does not exist. Creating it...")

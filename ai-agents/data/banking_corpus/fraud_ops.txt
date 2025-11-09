@@ -1,0 +1,5 @@
+Risk & Fraud – Ops Notes
+
+• Chargeback rate 0.9% (↑ from 0.6%); spikes in card-not-present groceries.
+• KYC failure 7% for selfie flow; biometric match errors on low-light images.
+• ‘Compliance hold’ incidents: 23 in Q3; 9 linked to name mismatch edge cases.

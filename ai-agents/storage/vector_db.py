@@ -18,21 +18,28 @@ class LocalVectorDB:
         )
         self.model = embed_model
         self.db_path = db_path
-        self.vectors = []
-        self.meta = []
+        self.vectors: List[List[float]] = []
+        self.meta: List[Dict] = []
 
-        # Load previous data if exists
         if os.path.exists(db_path):
             try:
                 with open(db_path, "r") as f:
                     data = json.load(f)
-                    self.vectors = np.array(data["vectors"])
-                    self.meta = data["meta"]
-                    print(f"✅ Loaded {len(self.vectors)} vectors from {db_path}")
+                # Keep as lists so .append works - ensure they're actually lists
+                vectors_data = data.get("vectors", []) or []
+                meta_data = data.get("meta", []) or []
+                # Ensure vectors are lists of lists (not numpy arrays)
+                self.vectors = []
+                for vec in vectors_data:
+                    if isinstance(vec, list):
+                        self.vectors.append(vec)
+                    else:
+                        self.vectors.append(list(vec))
+                self.meta = meta_data if isinstance(meta_data, list) else []
+                print(f"✅ Loaded {len(self.vectors)} vectors from {db_path}")
             except Exception as e:
                 print(f"⚠️  Could not load vector DB: {e}")
 
-    # Generate embedding vector
     def embed(self, text: str) -> List[float]:
         response = self.client.embeddings.create(
             model=self.model,
@@ -40,10 +47,13 @@ class LocalVectorDB:
         )
         return response.data[0].embedding
 
-    # Add chunks of one document
     def add_document(self, doc_id: str, chunks: List[str]):
+        count_before = len(self.vectors)
         for i, chunk in enumerate(chunks):
             emb = self.embed(chunk)
+            # ensure emb is a list (not np.ndarray)
+            if not isinstance(emb, list):
+                emb = list(emb)
             self.vectors.append(emb)
             self.meta.append({
                 "doc_id": doc_id,
@@ -51,25 +61,23 @@ class LocalVectorDB:
                 "text": chunk
             })
         self._save()
-        print(f"📦 Stored {len(chunks)} chunks for {doc_id}")
+        print(f"📦 Stored {len(self.vectors) - count_before} chunks for {doc_id}")
 
-    # Save database to disk
     def _save(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        np_vectors = np.array(self.vectors).tolist()
-        data = {"vectors": np_vectors, "meta": self.meta}
+        data = {"vectors": self.vectors, "meta": self.meta}  # lists serialize to JSON cleanly
         with open(self.db_path, "w") as f:
             json.dump(data, f, indent=2)
         print(f"💾 Saved {len(self.vectors)} vectors to {self.db_path}")
 
-    # Query the database for most similar chunks
     def query(self, text: str, top_k: int = 5) -> List[Dict]:
-        if not len(self.vectors):
+        if not self.vectors:
             raise ValueError("❌ Vector DB is empty. Please run build_rag_index.py first to index documents.")
         try:
             query_vec = np.array(self.embed(text)).reshape(1, -1)
-            sims = cosine_similarity(query_vec, np.array(self.vectors))[0]
-            idxs = np.argsort(sims)[::-1][:top_k]
+            matrix    = np.array(self.vectors, dtype=float)
+            sims      = cosine_similarity(query_vec, matrix)[0]
+            idxs      = np.argsort(sims)[::-1][:top_k]
             return [self.meta[i] for i in idxs]
         except Exception as e:
             raise ValueError(f"Error querying vector database: {str(e)}")

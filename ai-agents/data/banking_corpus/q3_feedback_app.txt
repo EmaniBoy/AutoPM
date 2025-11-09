@@ -1,0 +1,7 @@
+Digital Banking App – Q3 Customer Feedback
+
+• Transfer flow averages 7 steps; abandonment at confirmation up from 9% → 14% q/q.
+• Android 12 upload crash rate 3.2% (vs 0.4% on iOS 17). Most repros tied to image uploads.
+• New user 7-day retention 31% (down from 38%).
+• Dark mode adoption 85%; NPS +12 among dark-mode users.
+• Search complaints +120% tickets; users want filters (amount/date/merchant).
