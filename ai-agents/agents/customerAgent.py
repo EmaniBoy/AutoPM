@@ -102,7 +102,8 @@ def _infer_tasks_from_prompt(prompt: str) -> AnalysisTasks:
     k_problems = ("problems", "pain points", "issues", "risks", "bottlenecks")
     k_ideas = ("ideas", "solutions", "recommendations", "features", "product ideas", "roadmap")
     k_metrics = ("metrics", "kpis", "numbers", "rates", "counts", "statistics", "conversion", "retention", "crashes", "kyc", "chargebacks")
-
+    
+    # First, detect what user WANTS (positive detection)
     wants = AnalysisTasks(
         summary=any(k in p for k in k_summary),
         findings=any(k in p for k in k_findings),
@@ -110,6 +111,33 @@ def _infer_tasks_from_prompt(prompt: str) -> AnalysisTasks:
         ideas=any(k in p for k in k_ideas),
         metrics=any(k in p for k in k_metrics),
     )
+    
+    # Then, detect what user wants to SKIP by looking for skip patterns
+    # Look for patterns like "skip X", "skip X and Y", "no X", etc.
+    skip_keywords = ("skip", "no", "don't", "dont", "exclude", "ignore", "without")
+    
+    # Find the text after skip keywords
+    skip_pattern = re.search(r'\b(skip|no|don\'t|dont|exclude|ignore|without)\s+([^.;]+)', p)
+    if skip_pattern:
+        skip_text = skip_pattern.group(2)  # Text after "skip" keyword
+        # Check which task keywords appear in the skip text
+        skip_summary = any(k in skip_text for k in k_summary)
+        skip_findings = any(k in skip_text for k in k_findings)
+        skip_problems = any(k in skip_text for k in k_problems)
+        skip_ideas = any(k in skip_text for k in k_ideas)
+        skip_metrics = any(k in skip_text for k in k_metrics)
+        
+        # Disable tasks that are explicitly mentioned after skip
+        if skip_summary:
+            wants.summary = False
+        if skip_findings:
+            wants.findings = False
+        if skip_problems:
+            wants.problems = False
+        if skip_ideas:
+            wants.ideas = False
+        if skip_metrics:
+            wants.metrics = False
 
     # "only/just X" semantics disable everything else
     # But first check if a keyword appears BEFORE "only/just" (e.g., "metrics only relevant to...")
@@ -280,35 +308,72 @@ class NemotronDocumentAnalyzer:
             if not content:
                 reasoning = getattr(msg, "reasoning_content", None)
                 if reasoning:
-                    # Try to extract just the final answer, not the reasoning process
                     reasoning_text = reasoning.strip()
-                    # Look for patterns that indicate the start of the actual answer
-                    # Common patterns: "The summary is:", "Summary:", "In summary:", etc.
-                    summary_markers = [
-                        "summary:", "the summary is:", "in summary:", 
-                        "here's the summary:", "summary of", "to summarize"
-                    ]
-                    reasoning_lower = reasoning_text.lower()
                     
-                    # Try to find where the actual summary starts
-                    for marker in summary_markers:
-                        idx = reasoning_lower.find(marker)
-                        if idx != -1:
-                            # Extract from after the marker
-                            content = reasoning_text[idx + len(marker):].strip()
-                            # Take first paragraph or sentences
-                            if "\n\n" in content:
-                                content = content.split("\n\n")[0]
-                            break
+                    # Look for JSON patterns first (for problems/ideas responses)
+                    # Try to find JSON array or object
+                    if '[' in reasoning_text or '"problem"' in reasoning_text.lower() or '"title"' in reasoning_text.lower():
+                        # Find the start of JSON array
+                        if '[' in reasoning_text:
+                            start_idx = reasoning_text.index('[')
+                            # Find matching closing bracket
+                            bracket_count = 0
+                            for i in range(start_idx, len(reasoning_text)):
+                                if reasoning_text[i] == '[':
+                                    bracket_count += 1
+                                elif reasoning_text[i] == ']':
+                                    bracket_count -= 1
+                                    if bracket_count == 0:
+                                        content = reasoning_text[start_idx:i+1]
+                                        break
+                            # If bracket not closed (truncated), try to extract what we have
+                            if not content and bracket_count > 0:
+                                # Extract up to the last complete object
+                                partial = reasoning_text[start_idx:]
+                                # Try to find last complete object
+                                last_brace = partial.rfind('}')
+                                if last_brace != -1:
+                                    # Find the start of that object
+                                    obj_start = partial.rfind('{', 0, last_brace)
+                                    if obj_start != -1:
+                                        # Extract array with at least one complete object
+                                        content = '[' + partial[obj_start:last_brace+1] + ']'
+                        # If no array found, look for single object
+                        elif '{' in reasoning_text:
+                            start_idx = reasoning_text.index('{')
+                            brace_count = 0
+                            for i in range(start_idx, len(reasoning_text)):
+                                if reasoning_text[i] == '{':
+                                    brace_count += 1
+                                elif reasoning_text[i] == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        content = '[' + reasoning_text[start_idx:i+1] + ']'
+                                        break
                     
-                    # If no marker found, try to extract the last paragraph (often the final answer)
+                    # If no JSON found, try summary markers
+                    if not content:
+                        summary_markers = [
+                            "summary:", "the summary is:", "in summary:", 
+                            "here's the summary:", "summary of", "to summarize"
+                        ]
+                        reasoning_lower = reasoning_text.lower()
+                        
+                        for marker in summary_markers:
+                            idx = reasoning_lower.find(marker)
+                            if idx != -1:
+                                content = reasoning_text[idx + len(marker):].strip()
+                                if "\n\n" in content:
+                                    content = content.split("\n\n")[0]
+                                break
+                    
+                    # If still no content, try to extract the last paragraph
                     if not content:
                         paragraphs = [p.strip() for p in reasoning_text.split("\n\n") if p.strip()]
                         if paragraphs:
-                            # Take the last substantial paragraph (likely the answer)
                             content = paragraphs[-1]
                         else:
-                            # Fallback: take everything but filter obvious reasoning phrases
+                            # Fallback: filter reasoning phrases
                             lines = reasoning_text.split("\n")
                             filtered = []
                             skip_phrases = [
@@ -324,7 +389,10 @@ class NemotronDocumentAnalyzer:
                             else:
                                 content = reasoning_text
                     
-                    print("🔍 DEBUG: Found content in reasoning_content (extracted final answer)")
+                    if content:
+                        print(f"🔍 DEBUG: Found content in reasoning_content (length: {len(content)}, preview: {content[:100]}...)")
+                    else:
+                        print(f"🔍 DEBUG: No content extracted from reasoning_content (length: {len(reasoning_text)})")
 
             # If model refused or gave no content, retry once in "simple mode"
             if not content:
@@ -545,20 +613,44 @@ Summary (4-5 sentences only):"""
         if tasks.findings:
             print("🔄 Findings: extracting key findings...")
             findings_prompt = (
-                "Based on the evidence below, write 2-3 sentences with concrete findings (issues, metrics, pain points). "
-                "Use only information from the evidence; do not speculate.\n\n"
+                "Based on the evidence below, extract 3-5 concrete key findings. "
+                "Each finding should be a single sentence (10-35 words) that mentions specific issues, metrics, or pain points from the evidence. "
+                "Use only information from the evidence; do not speculate or include reasoning.\n\n"
                 f"Evidence:\n{document_text[:2500]}\n\n"
-                "Key findings:"
+                "Return ONLY the key findings, one per line. No preamble, no reasoning, no explanations."
             )
 
             findings_response = self._nv_chat([
                 {"role": "system", "content": PM_SYSTEM},
                 {"role": "user", "content": findings_prompt}
-            ], max_tokens=300)
+            ], max_tokens=400)
 
             if findings_response and not findings_response.startswith("Error"):
-                sentences = [s.strip() for s in findings_response.replace('\n', ' ').split('.') if s.strip()]
-                key_findings = sentences[:3]
+                # Filter out reasoning text
+                skip_phrases = [
+                    "okay, let's", "first,", "the user wants", "they specified",
+                    "i need to", "the summary needs to", "wait,", "need to present",
+                    "let's tackle", "the user is", "they need", "based on the provided"
+                ]
+                lines = findings_response.split('\n')
+                clean_lines = []
+                for line in lines:
+                    line_lower = line.strip().lower()
+                    # Skip lines that are clearly reasoning
+                    if not any(phrase in line_lower for phrase in skip_phrases):
+                        # Remove numbering and bullets
+                        cleaned = re.sub(r'^[\d\.\-\*\s]+', '', line.strip())
+                        if cleaned and len(cleaned) > 10:  # Must be substantial
+                            clean_lines.append(cleaned)
+                
+                # If we got clean lines, use them; otherwise try sentence splitting
+                if clean_lines:
+                    key_findings = clean_lines[:5]
+                else:
+                    sentences = [s.strip() for s in findings_response.replace('\n', ' ').split('.') if s.strip()]
+                    # Filter out reasoning sentences
+                    key_findings = [s for s in sentences[:5] 
+                                   if not any(phrase in s.lower() for phrase in skip_phrases)]
             else:
                 key_findings = []
 
@@ -573,7 +665,7 @@ Document:
 {document_text[:2500]}
 
 JSON:"""
-            problems_response = self._call_nemotron(problems_prompt, temperature=0.1, max_tokens=600) or "[]"
+            problems_response = self._call_nemotron(problems_prompt, temperature=0.1, max_tokens=1200) or "[]"  # Increased from 600
             problems = self._parse_json_objects(problems_response)
 
         # 4) IDEAS
@@ -681,6 +773,11 @@ JSON:"""
         if not isinstance(response, str):
             response = str(response)
 
+        # Debug: show what we're trying to parse
+        if not response or not response.strip():
+            print(f"⚠️  JSON parsing warning: Empty response")
+            return []
+
         try:
             response = response.strip()
 
@@ -694,11 +791,62 @@ JSON:"""
             elif "```" in response:
                 response = response.split("```")[1].split("```")[0]
 
-            # Extract JSON array
+            # Extract JSON array - be more aggressive in finding it
             if "[" in response:
-                response = response[response.index("["):]
-            if "]" in response:
-                response = response[:response.rindex("]") + 1]
+                start_idx = response.index("[")
+                # Try to find the matching closing bracket
+                bracket_count = 0
+                end_idx = start_idx
+                for i in range(start_idx, len(response)):
+                    if response[i] == '[':
+                        bracket_count += 1
+                    elif response[i] == ']':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            end_idx = i + 1
+                            break
+                
+                # If bracket not closed, try to extract complete objects
+                if bracket_count > 0:
+                    # Response was truncated, try to extract what we can
+                    partial = response[start_idx:]
+                    # Try to find last complete object
+                    last_brace = partial.rfind('}')
+                    if last_brace != -1:
+                        # Find the start of that object
+                        obj_start = partial.rfind('{', 0, last_brace)
+                        if obj_start != -1:
+                            # Extract array with at least one complete object
+                            content = '[' + partial[obj_start:last_brace+1] + ']'
+                    # If no array found, look for single object
+                    elif '{' in partial:
+                        start_idx = partial.index('{')
+                        brace_count = 0
+                        for i in range(start_idx, len(partial)):
+                            if partial[i] == '{':
+                                brace_count += 1
+                            elif partial[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    content = '[' + partial[start_idx:i+1] + ']'
+                                    break
+                    
+                    if content:
+                        return [json.loads(c) for c in content.split('},') if c.strip()]
+                
+                response = response[start_idx:end_idx] if end_idx > start_idx else response[start_idx:]
+            elif "{" in response:
+                # Single object, wrap in array
+                start_idx = response.index("{")
+                end_idx = response.rindex("}") + 1
+                obj_str = response[start_idx:end_idx]
+                try:
+                    obj = json.loads(obj_str)
+                    if isinstance(obj, dict):
+                        return [obj]
+                except:
+                    pass
+                response = "[" + obj_str + "]"
 
             parsed = json.loads(response)
 
@@ -709,10 +857,11 @@ JSON:"""
 
         except Exception as e:
             print(f"⚠️  JSON parsing warning: {e}, attempting repair...")
+            print(f"🔍 DEBUG: Response was: {response[:200]}...")
             # Determine required keys based on context (problems vs ideas)
             required_keys = ["problem", "severity", "impact_area"] if "problem" in (response or "").lower() else ["title", "description", "impact"]
             repaired = self._repair_json_array_of_objs(response, required_keys)
-            return repaired
+            return repaired if repaired else []
 
     def _parse_json_object(self, response: str) -> Dict:
         """Parse single JSON object from LLM response with fallback"""

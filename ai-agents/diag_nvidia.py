@@ -10,7 +10,7 @@ from openai import OpenAI
 # Load .env from ai-agents directory
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-API_BASE = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
+API_BASE = os.getenv("NVIDIA_API_BASEX", "https://integrate.api.nvidia.com/v1")
 API_KEY = os.getenv("NVIDIA_API_KEYX")
 PRIMARY = os.getenv("NVIDIA_LLM_MODEX", "nvidia/nvidia-nemotron-nano-9b-v2")
 SECOND = os.getenv("SECONDARY_LLM_MODEL", "meta/llama-3.1-8b-instruct")

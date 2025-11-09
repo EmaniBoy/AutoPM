@@ -25,7 +25,7 @@ print("🤖 Initializing RAG Pipeline...")
 retriever = LocalVectorDB(api_key=API_KEY, embed_model=EMBED_MODEL, db_path=DB_PATH)
 agent = NemotronDocumentAnalyzer(api_key=API_KEY, model=LLM_MODEL, vector_db=retriever)
 
-query = os.getenv("USER_QUERY", "Give key findings and 3 product ideas; skip metrics and summary")
+query = os.getenv("USER_QUERY", "Extract key findings from the customer feedback about the digital banking app. Return ONLY a JSON array of strings.")
 
 print(f"\n🔍 Query: {query}\n")
 
@@ -74,7 +74,7 @@ elif tasks.metrics and not (tasks.summary or tasks.findings or tasks.problems or
         except Exception as e:
             print(f"⚠️  Could not generate metrics chart: {e}")
 else:
-    # Mixed request: output a compact bundle
+    # Mixed request: output a compact bundle (respect skip semantics)
     if tasks.summary and insight.summary:
         print("\n📋 Summary:\n", insight.summary)
     if tasks.findings and insight.key_findings:
@@ -89,17 +89,19 @@ else:
         print("\n💡 Ideas:")
         for i, idea in enumerate(insight.product_ideas, 1):
             print(f"   {i}. {idea.get('title','')} — {idea.get('impact','')}")
+    # Only show metrics if explicitly requested (not skipped)
     if tasks.metrics and insight.metrics:
         print("\n📊 Metrics:")
         for k, v in insight.metrics.items():
             print(f"   • {k}: {v}")
         
         # Auto-generate visualization when metrics are requested
-        try:
-            viz_path = "data/results/metrics_chart.png"
-            agent.visualize_metrics(insight, save_path=viz_path)
-            print(f"\n📊 Metrics chart saved to {viz_path}")
-        except Exception as e:
-            print(f"⚠️  Could not generate metrics chart: {e}")
+        if wants_viz:  # Only generate chart if visualization keywords are present
+            try:
+                viz_path = "data/results/metrics_chart.png"
+                agent.visualize_metrics(insight, save_path=viz_path)
+                print(f"\n📊 Metrics chart saved to {viz_path}")
+            except Exception as e:
+                print(f"⚠️  Could not generate metrics chart: {e}")
 
 print("\n✅ RAG Analysis complete!")
