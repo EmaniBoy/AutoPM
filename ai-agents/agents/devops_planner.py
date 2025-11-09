@@ -1,3 +1,5 @@
+#python -m agents.devops_planner --apply
+
 import base64
 import json
 import os
@@ -404,7 +406,7 @@ def propose_plan(repo_summary: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     plan["sprint"] = _normalize_sprint(plan.get("sprint"))
-    
+
     _yaml_min_sanity(plan["yaml"])
     return plan
 

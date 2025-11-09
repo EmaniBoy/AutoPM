@@ -1,2 +1,5 @@
 .env
 .venv
+# env
+.env
+ai-agents/.env
