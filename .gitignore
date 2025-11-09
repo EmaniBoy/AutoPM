@@ -1,2 +1,12 @@
 .env
 .venv
+# env
+.env
+ai-agents/.env
+
+# Node
+node_modules/
+ai-agents/agents/node_modules/
+# Env
+.env
+*.env
