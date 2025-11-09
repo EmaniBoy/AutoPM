@@ -1,10 +1,57 @@
+# to run: python -m agents.orchestrator --ask
+
+
+
 # ai-agents/agents/orchestrator.py
+
+
+
+
+
 from __future__ import annotations
+import glob, math
+from pathlib import Path
+import numpy as np
 
 import os, json, requests
 from typing import TypedDict, Dict, Any, List, Optional
 
 from dotenv import load_dotenv, find_dotenv
+
+def _read_text_files(paths: List[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for p in paths:
+        p = os.path.abspath(p)
+        if os.path.isdir(p):
+            for fp in glob.glob(os.path.join(p, "**", "*.*"), recursive=True):
+                if fp.lower().endswith((".txt", ".md")):
+                    try:
+                        out[fp] = Path(fp).read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        pass
+        elif os.path.isfile(p) and p.lower().endswith((".txt", ".md")):
+            try:
+                out[p] = Path(p).read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                pass
+    return out
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    da = np.linalg.norm(a); db = np.linalg.norm(b)
+    if da == 0.0 or db == 0.0:
+        return 0.0
+    return float(np.dot(a, b) / (da * db))
+
+def _format_legend(legend: List[Dict[str, Any]]) -> str:
+    # [{"source": "...", "score": 0.82}, ...] -> "1) fileA (0.82), 2) fileB (0.75)"
+    parts = []
+    for i, row in enumerate(legend, 1):
+        s = f"{i}) {os.path.basename(row['source'])}"
+        if "score" in row:
+            s += f" ({row['score']:.2f})"
+        parts.append(s)
+    return ", ".join(parts)
+
 
 # Load .env deterministically (ai-agents/.env + fallback search)
 _THIS_DIR = os.path.dirname(__file__)
@@ -89,7 +136,17 @@ def node_router(state: OrchestratorState) -> OrchestratorState:
         state["raw_input"]    = inputs.get("raw_input", state.get("raw_input", msg))
         state["repo"]         = inputs.get("repo", state.get("repo", GITHUB_REPO))
         state["capacity_default"] = int(inputs.get("capacity_default", state.get("capacity_default", 12)))
-        state["sources"] = inputs.get("sources", state.get("sources", []))
+        # state["sources"] = inputs.get("sources", state.get("sources", []))
+        # --- sources: normalize to list ---
+        src = inputs.get("sources", state.get("sources", []))
+        if isinstance(src, str):
+            # accept comma-separated or single token
+            src_list = [s.strip() for s in src.split(",") if s.strip()]
+        elif isinstance(src, (list, tuple, set)):
+            src_list = list(src)
+        else:
+            src_list = []
+        state["sources"] = src_list
     except Exception as e:
         state.setdefault("errors", []).append(f"router: {e}")
         state["router_plan"] = {"intent": "other", "inputs": {}, "apply_changes": False}
@@ -98,33 +155,172 @@ def node_router(state: OrchestratorState) -> OrchestratorState:
 
 def _run_research(state: OrchestratorState) -> None:
     """
-    RESEARCH agent placeholder.
-    Replace this with your Nemotron Parse API + RAG pipeline.
-    For now: extract issues/ideas as concise bullets so Jira has something.
+    RAG-backed RESEARCH agent.
+    Uses storage/local_vectors.json only if it truly contains non-empty `embedding` arrays.
+    Otherwise, falls back to TF-IDF retrieval over ./ai-agents/data/*.
     """
     try:
-        prompt = (
-            "Extract 5 problems/opportunities and 3 product ideas from the context. "
-            "Return concise dash bullets."
+        from pathlib import Path
+        import numpy as np
+        import json as _json
+        import os
+
+        # ---- resolve source folders ----
+        def _resolve_sources(s):
+            if isinstance(s, str):
+                s = [s]
+            elif not isinstance(s, list):
+                s = []
+            data_root = os.path.abspath(os.path.join(_THIS_DIR, "..", "data"))
+            out = []
+            for p in s:
+                if not os.path.isabs(p) and not p.startswith("."):
+                    p = os.path.join(data_root, p)
+                out.append(os.path.abspath(p))
+            return out
+
+        default_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "research"))
+        banking_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "banking_corpus"))
+        source_paths = _resolve_sources(state.get("sources")) or [
+            p for p in [default_dir, banking_dir] if os.path.isdir(p)
+        ]
+
+        # ---- try vector DB iff it has embeddings ----
+        index_path = os.path.abspath(os.path.join(_THIS_DIR, "..", "storage", "local_vectors.json"))
+        use_vectors, vecs = False, []
+        if os.path.isfile(index_path):
+            raw = Path(index_path).read_text(encoding="utf-8")
+            j = _json.loads(raw)
+            vecs = j.get("vectors") if isinstance(j, dict) else (j if isinstance(j, list) else [])
+            if vecs and isinstance(vecs[0], dict) and isinstance(vecs[0].get("embedding"), list) and vecs[0]["embedding"]:
+                use_vectors = True  # only if we truly have embeddings
+
+        retrieved, legend = [], []
+        user_query = state.get("raw_input") or state.get("user_text") or "Summarize problems and propose ideas."
+
+        if use_vectors:
+            # ---- vector mode (cosine to weighted centroid) ----
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                texts = [(v.get("text") or "") for v in vecs]
+                tfidf = TfidfVectorizer(max_features=4096).fit(texts + [user_query])
+                q_vec_lex = tfidf.transform([user_query]).toarray()[0]
+                weights = tfidf.transform(texts).toarray() @ q_vec_lex
+            except Exception:
+                weights = np.ones(len(vecs), dtype=float)
+
+            M = max(5, min(50, len(vecs)))
+            idx_sorted = np.argsort(weights)[::-1][:M]
+
+            emb_dim = len(vecs[0]["embedding"])
+            centroid = np.zeros((emb_dim,), dtype=float)
+            total_w = 0.0
+            for i in idx_sorted:
+                e = np.array(vecs[i]["embedding"], dtype=float)
+                w = float(weights[i] + 1e-6)
+                centroid += w * e
+                total_w += w
+            if total_w > 0:
+                centroid /= total_w
+
+            def _cos(a, b):
+                na = np.linalg.norm(a); nb = np.linalg.norm(b)
+                return 0.0 if na == 0 or nb == 0 else float(np.dot(a, b) / (na * nb))
+
+            scores = []
+            for v in vecs:
+                e = np.array(v.get("embedding") or [], dtype=float)
+                scores.append(_cos(centroid, e) if e.size else 0.0)
+
+            order = np.argsort(np.array(scores))[::-1][:8]
+            for i in order:
+                v = vecs[int(i)]
+                retrieved.append({"source": v.get("source") or v.get("id") or "unknown", "text": v.get("text", "")})
+                legend.append({"source": v.get("source") or "unknown", "score": float(scores[int(i)])})
+
+        else:
+            # ---- TF-IDF fallback over files ----
+            from pathlib import Path
+            def _read_text_files(paths):
+                out = {}
+                for p in paths:
+                    if os.path.isdir(p):
+                        for root, _, files in os.walk(p):
+                            for fn in files:
+                                if fn.lower().endswith((".txt", ".md")):
+                                    fp = os.path.join(root, fn)
+                                    try:
+                                        out[fp] = Path(fp).read_text(encoding="utf-8", errors="ignore")
+                                    except Exception:
+                                        pass
+                    elif os.path.isfile(p):
+                        try:
+                            out[p] = Path(p).read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            pass
+                return out
+
+            corpus = _read_text_files(source_paths or [default_dir])
+            if not corpus:
+                raise RuntimeError(f"No research files found. Checked: {source_paths or [default_dir]}")
+
+            files, texts = list(corpus.keys()), list(corpus.values())
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                from sklearn.metrics.pairwise import cosine_similarity
+                vec = TfidfVectorizer(max_features=8192)
+                X = vec.fit_transform(texts)
+                q = vec.transform([user_query])
+                sims = cosine_similarity(q, X)[0]
+            except Exception:
+                # ultra-safe lexical fallback
+                sims = np.array([len(t) for t in texts], dtype=float)
+
+            topk = np.argsort(sims)[::-1][:8]
+            for idx in topk:
+                retrieved.append({"source": files[idx], "text": texts[idx]})
+                legend.append({"source": files[idx], "score": float(sims[idx])})
+
+        # ---- build grounded prompt ----
+        blocks = []
+        for i, ch in enumerate(retrieved, 1):
+            snip = (ch["text"] or "").strip()
+            if len(snip) > 1200: snip = snip[:1200] + " ..."
+            blocks.append(f"[{i}] Source: {os.path.basename(ch['source'])}\n{snip}")
+        ctx = "\n\n".join(blocks) if blocks else "(no external context)"
+
+        system_prompt = (
+            "You are a product research analyst. Using ONLY the provided context, do the following:\n"
+            "1) List 5 concrete problems/opportunities.\n"
+            "2) Propose 3 crisp product ideas.\n"
+            "Rules: Return markdown bullets, each starting with '- '. No preamble. Be concise."
         )
+        user_msg = f"User query: {user_query}\n\nGrounded context (top {len(retrieved)} chunks):\n{ctx}"
+
         summary = nv_chat(
-            [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": f"Context: {state.get('raw_input')}\nSources: {state.get('sources')}"}
-            ],
-            max_tokens=500,
+            [{"role": "system", "content": system_prompt},
+             {"role": "user", "content": user_msg}],
+            max_tokens=700,
         )
-        # Seed a small backlog from bullets
-        items = [
-            {"summary": line.strip("- ").strip()}
-            for line in summary.splitlines()
-            if line.strip().startswith("-")
-        ][:8]
-        state["backlog"] = items or state.get("backlog", [])
+
+        items = [{"summary": line.strip("- ").strip()} for line in summary.splitlines() if line.strip().startswith("-")][:8]
+        if items:
+            state["backlog"] = items
+
+        def _legend_md(legend_list):
+            if not legend_list: return ""
+            parts = [f"{os.path.basename(x.get('source','unknown'))} ({x.get('score',0):.3f})" for x in legend_list[:5]]
+            return ", ".join(parts)
+
         state.setdefault("summary_md", "")
-        state["summary_md"] += "### Research Findings\n" + summary + "\n\n"
+        state["summary_md"] += "### Research Findings\n" + summary.strip() + "\n\n"
+        lg = _legend_md(legend)
+        if lg:
+            state["summary_md"] += f"*Sources used:* {lg}\n\n"
+
     except Exception as e:
         state.setdefault("errors", []).append(f"research: {e}")
+
 
 
 def _run_jira(state: OrchestratorState) -> None:
