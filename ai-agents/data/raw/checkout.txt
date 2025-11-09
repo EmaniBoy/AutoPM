@@ -1,0 +1,2 @@
+Users report long checkout (7 steps). Many abandon on shipping page.
+Android image upload crashes on v12+. Search results irrelevant; want filters.

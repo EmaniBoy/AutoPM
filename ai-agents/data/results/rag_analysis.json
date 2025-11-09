@@ -1,0 +1,71 @@
+{
+  "summary": "1. The checkout process suffers from a lengthy",
+  "key_findings": [
+    "Unable to extract findings due to API error"
+  ],
+  "problems_identified": [
+    {
+      "problem": "Users report long checkout process with 7 steps leading to abandonment on shipping page",
+      "severity": "High",
+      "impact_area": "UX"
+    },
+    {
+      "problem": "Android image upload crashes on v12+ version",
+      "severity": "High",
+      "impact_area": "Performance"
+    },
+    {
+      "problem": "Search results are irrelevant during checkout experience",
+      "severity": "Medium",
+      "impact_area": "UX"
+    }
+  ],
+  "product_ideas": [
+    {
+      "title": "Streamlined One-Page Checkout",
+      "description": "A simplified checkout process condensed into a single page with smart pre-filled shipping details and a progress indicator to reduce user friction.",
+      "impact": "Decrease checkout abandonment by 30-40% by minimizing steps and improving user confidence."
+    },
+    {
+      "title": "AI-Optimized Image Upload",
+      "description": "A dynamic image upload system that compresses and processes images in real-time using AI to prevent crashes on Android v12+ devices.",
+      "impact": "Eliminate image upload crashes on Android v12+ and improve user experience during product listings."
+    },
+    {
+      "title": "Contextual Search During Checkout",
+      "description": "A search feature that dynamically adjusts results based on the user's cart items and shipping location to provide relevant product suggestions.",
+      "impact": "Improve search relevance by 50% during checkout, increasing conversion rates and reducing returns."
+    }
+  ],
+  "sentiment_analysis": {
+    "score": 0.0,
+    "label": "Neutral",
+    "confidence": 0.5
+  },
+  "metrics": {
+    "total_problems": 3,
+    "high_severity_problems": 2,
+    "medium_severity_problems": 1,
+    "low_severity_problems": 0,
+    "total_ideas": 3,
+    "document_length_words": 78,
+    "analysis_completeness": 1.0,
+    "rag_chunks_retrieved": 2,
+    "rag_sources_count": 2
+  },
+  "timestamp": "2025-11-08T23:06:31.400138",
+  "retrieved_sources": [
+    {
+      "doc_id": "onboarding",
+      "chunk_id": 0,
+      "text_preview": "30% week-one churn; users don’t understand key features. Request better tutorials."
+    },
+    {
+      "doc_id": "checkout",
+      "chunk_id": 0,
+      "text_preview": "Users report long checkout (7 steps). Many abandon on shipping page. Android image upload crashes on..."
+    }
+  ],
+  "query_used": "customer feedback issues related to checkout experience",
+  "rag_enabled": true
+}
