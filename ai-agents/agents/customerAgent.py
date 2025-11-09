@@ -1170,10 +1170,10 @@ if __name__ == "__main__":
     load_dotenv(dotenv_path=os.path.join(ai_agents_dir, ".env"))
 
     # Get API key from environment variable instead of hardcoding
-    API_KEY = os.getenv("NVIDIA_API_KEY")
+    API_KEY = os.getenv("NVIDIA_API_KEYX")
 
     if not API_KEY:
-        raise ValueError("NVIDIA_API_KEY environment variable is not set. Please set it in your .env file.")
+        raise ValueError("NVIDIA_API_KEYX environment variable is not set. Please set it in your .env file.")
 
     # Initialize the agent
     print("🤖 Initializing Nemotron Document Analyzer Agent...")

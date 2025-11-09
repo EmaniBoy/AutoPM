@@ -11,12 +11,12 @@ from openai import OpenAI
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 API_BASE = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
-API_KEY = os.getenv("NVIDIA_API_KEY")
-PRIMARY = os.getenv("NVIDIA_LLM_MODEL", "nvidia/nvidia-nemotron-nano-9b-v2")
+API_KEY = os.getenv("NVIDIA_API_KEYX")
+PRIMARY = os.getenv("NVIDIA_LLM_MODEX", "nvidia/nvidia-nemotron-nano-9b-v2")
 SECOND = os.getenv("SECONDARY_LLM_MODEL", "meta/llama-3.1-8b-instruct")
 
 if not API_KEY:
-    print("Missing NVIDIA_API_KEY in .env")
+    print("Missing NVIDIA_API_KEYX in .env")
     sys.exit(1)
 
 client = OpenAI(base_url=API_BASE, api_key=API_KEY)

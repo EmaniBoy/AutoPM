@@ -9,15 +9,15 @@ from storage.vector_db import LocalVectorDB
 
 load_dotenv()
 
-API_KEY = os.getenv("NVIDIA_API_KEY")
-EMBED_MODEL = os.getenv("NVIDIA_EMBED_MODEL")
+API_KEY = os.getenv("NVIDIA_API_KEYX")
+EMBED_MODEL = os.getenv("NVIDIA_EMBED_MODELX")
 DB_PATH = os.getenv("VECTOR_DB_PATH", "storage/local_vectors.json")
 
 if not API_KEY:
-    raise ValueError("NVIDIA_API_KEY not found in environment variables. Please set it in your .env file.")
+    raise ValueError("NVIDIA_API_KEYX not found in environment variables. Please set it in your .env file.")
 
 if not EMBED_MODEL:
-    raise ValueError("NVIDIA_EMBED_MODEL not found in environment variables. Please set it in your .env file.")
+    raise ValueError("NVIDIA_EMBED_MODELX not found in environment variables. Please set it in your .env file.")
 
 def chunk_text(text, size=800, overlap=150):
     """

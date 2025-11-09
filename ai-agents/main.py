@@ -7,9 +7,9 @@ from agents.research import fetch_research_snippets
 # Load .env from ai-agents directory
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-API_KEY = os.getenv("NVIDIA_API_KEY")
-LLM_MODEL = os.getenv("NVIDIA_LLM_MODEL", "nvidia/nvidia-nemotron-nano-9b-v2")
-EMBED_MODEL = os.getenv("NVIDIA_EMBED_MODEL")
+API_KEY = os.getenv("NVIDIA_API_KEYX")
+LLM_MODEL = os.getenv("NVIDIA_LLM_MODEX", "nvidia/nvidia-nemotron-nano-9b-v2")
+EMBED_MODEL = os.getenv("NVIDIA_EMBED_MODELX")
 DB_PATH = os.getenv("VECTOR_DB_PATH", "storage/local_vectors.json")
 
 # Helper function to detect if query asks for visualization
