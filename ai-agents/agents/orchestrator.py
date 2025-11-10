@@ -1,11 +1,11 @@
 # to run: python -m agents.orchestrator --ask
 
-
+#python api_server.py
 
 # ai-agents/agents/orchestrator.py
 
-
-
+# Extract key findings from the customer feedback about the digital banking app. Return ONLY a JSON array of strings.
+# turn them into INVEST epics/stories for PB; plan a 3-week sprint (capacity 18); generate/update CI; Apply
 
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def node_router(state: OrchestratorState) -> OrchestratorState:
 def _run_research(state: OrchestratorState) -> None:
     """
     RAG-backed RESEARCH agent.
-    Uses storage/local_vectors.json only if it truly contains non-empty `embedding` arrays.
+    Uses NemotronDocumentAnalyzer (like main.py) when vector DB is available.
     Otherwise, falls back to TF-IDF retrieval over ./ai-agents/data/*.
     """
     try:
@@ -165,158 +165,262 @@ def _run_research(state: OrchestratorState) -> None:
         import json as _json
         import os
 
-        # ---- resolve source folders ----
-        def _resolve_sources(s):
-            if isinstance(s, str):
-                s = [s]
-            elif not isinstance(s, list):
-                s = []
-            data_root = os.path.abspath(os.path.join(_THIS_DIR, "..", "data"))
-            out = []
-            for p in s:
-                if not os.path.isabs(p) and not p.startswith("."):
-                    p = os.path.join(data_root, p)
-                out.append(os.path.abspath(p))
-            return out
-
-        default_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "research"))
-        banking_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "banking_corpus"))
-        source_paths = _resolve_sources(state.get("sources")) or [
-            p for p in [default_dir, banking_dir] if os.path.isdir(p)
-        ]
-
-        # ---- try vector DB iff it has embeddings ----
-        index_path = os.path.abspath(os.path.join(_THIS_DIR, "..", "storage", "local_vectors.json"))
-        use_vectors, vecs = False, []
-        if os.path.isfile(index_path):
-            raw = Path(index_path).read_text(encoding="utf-8")
-            j = _json.loads(raw)
-            vecs = j.get("vectors") if isinstance(j, dict) else (j if isinstance(j, list) else [])
-            if vecs and isinstance(vecs[0], dict) and isinstance(vecs[0].get("embedding"), list) and vecs[0]["embedding"]:
-                use_vectors = True  # only if we truly have embeddings
-
-        retrieved, legend = [], []
         user_query = state.get("raw_input") or state.get("user_text") or "Summarize problems and propose ideas."
-
-        if use_vectors:
-            # ---- vector mode (cosine to weighted centroid) ----
+        
+        # ---- try to use NemotronDocumentAnalyzer (like main.py) ----
+        index_path = os.path.abspath(os.path.join(_THIS_DIR, "..", "storage", "local_vectors.json"))
+        use_customer_agent = False
+        
+        if os.path.isfile(index_path):
             try:
-                from sklearn.feature_extraction.text import TfidfVectorizer
-                texts = [(v.get("text") or "") for v in vecs]
-                tfidf = TfidfVectorizer(max_features=4096).fit(texts + [user_query])
-                q_vec_lex = tfidf.transform([user_query]).toarray()[0]
-                weights = tfidf.transform(texts).toarray() @ q_vec_lex
-            except Exception:
-                weights = np.ones(len(vecs), dtype=float)
-
-            M = max(5, min(50, len(vecs)))
-            idx_sorted = np.argsort(weights)[::-1][:M]
-
-            emb_dim = len(vecs[0]["embedding"])
-            centroid = np.zeros((emb_dim,), dtype=float)
-            total_w = 0.0
-            for i in idx_sorted:
-                e = np.array(vecs[i]["embedding"], dtype=float)
-                w = float(weights[i] + 1e-6)
-                centroid += w * e
-                total_w += w
-            if total_w > 0:
-                centroid /= total_w
-
-            def _cos(a, b):
-                na = np.linalg.norm(a); nb = np.linalg.norm(b)
-                return 0.0 if na == 0 or nb == 0 else float(np.dot(a, b) / (na * nb))
-
-            scores = []
-            for v in vecs:
-                e = np.array(v.get("embedding") or [], dtype=float)
-                scores.append(_cos(centroid, e) if e.size else 0.0)
-
-            order = np.argsort(np.array(scores))[::-1][:8]
-            for i in order:
-                v = vecs[int(i)]
-                retrieved.append({"source": v.get("source") or v.get("id") or "unknown", "text": v.get("text", "")})
-                legend.append({"source": v.get("source") or "unknown", "score": float(scores[int(i)])})
-
-        else:
-            # ---- TF-IDF fallback over files ----
-            from pathlib import Path
-            def _read_text_files(paths):
-                out = {}
-                for p in paths:
-                    if os.path.isdir(p):
-                        for root, _, files in os.walk(p):
-                            for fn in files:
-                                if fn.lower().endswith((".txt", ".md")):
-                                    fp = os.path.join(root, fn)
-                                    try:
-                                        out[fp] = Path(fp).read_text(encoding="utf-8", errors="ignore")
-                                    except Exception:
-                                        pass
-                    elif os.path.isfile(p):
-                        try:
-                            out[p] = Path(p).read_text(encoding="utf-8", errors="ignore")
-                        except Exception:
-                            pass
+                from agents.customerAgent import NemotronDocumentAnalyzer, _infer_tasks_from_prompt
+                from storage.vector_db import LocalVectorDB
+                
+                # Check if vector DB has embeddings
+                raw = Path(index_path).read_text(encoding="utf-8")
+                j = _json.loads(raw)
+                vecs = j.get("vectors") if isinstance(j, dict) else (j if isinstance(j, list) else [])
+                if vecs and isinstance(vecs[0], dict) and isinstance(vecs[0].get("embedding"), list) and vecs[0]["embedding"]:
+                    # Initialize like main.py does
+                    API_KEY = os.getenv("NVIDIA_API_KEYX")
+                    EMBED_MODEL = os.getenv("NVIDIA_EMBED_MODELX")
+                    LLM_MODEL = os.getenv("NVIDIA_LLM_MODEX", "nvidia/nvidia-nemotron-nano-9b-v2")
+                    DB_PATH = os.getenv("VECTOR_DB_PATH", "storage/local_vectors.json")
+                    
+                    if API_KEY and EMBED_MODEL:
+                        retriever = LocalVectorDB(api_key=API_KEY, embed_model=EMBED_MODEL, db_path=DB_PATH)
+                        agent = NemotronDocumentAnalyzer(api_key=API_KEY, model=LLM_MODEL, vector_db=retriever)
+                        tasks = _infer_tasks_from_prompt(user_query)
+                        
+                        # Use the same approach as main.py
+                        insight = agent.analyze_with_rag(
+                            query=user_query,
+                            document_type="customer_feedback",
+                            top_k=5,
+                            tasks=tasks,
+                            allow_external=False,
+                        )
+                        
+                        # Export to JSON like main.py
+                        results_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "results"))
+                        os.makedirs(results_dir, exist_ok=True)
+                        agent.export_to_json(insight, os.path.join(results_dir, "rag_analysis.json"))
+                        
+                        # Build summary from insight (like main.py output)
+                        summary_parts = []
+                        if tasks.summary and insight.summary:
+                            summary_parts.append(f"📋 Summary:\n{insight.summary}")
+                        if tasks.findings and insight.key_findings:
+                            findings_text = "\n".join([f"   {i+1}. {f}" for i, f in enumerate(insight.key_findings)])
+                            summary_parts.append(f"🔎 Key Findings:\n{findings_text}")
+                        if tasks.problems and insight.problems_identified:
+                            problems_text = "\n".join([f"   {i+1}. [{p.get('severity','?')}/{p.get('impact_area','?')}] {p.get('problem','')}" 
+                                                       for i, p in enumerate(insight.problems_identified)])
+                            summary_parts.append(f"⚠️ Problems:\n{problems_text}")
+                        if tasks.ideas and insight.product_ideas:
+                            ideas_text = "\n".join([f"   {i+1}. {idea.get('title','')} — {idea.get('impact','')}" 
+                                                   for i, idea in enumerate(insight.product_ideas)])
+                            summary_parts.append(f"💡 Ideas:\n{ideas_text}")
+                        if tasks.metrics and insight.metrics:
+                            metrics_text = "\n".join([f"   • {k}: {v}" for k, v in insight.metrics.items()])
+                            summary_parts.append(f"📊 Metrics:\n{metrics_text}")
+                            
+                            # Generate metrics chart if metrics exist
+                            try:
+                                viz_path = os.path.join(results_dir, "metrics_chart.png")
+                                agent.visualize_metrics(insight, save_path=viz_path)
+                            except Exception:
+                                pass
+                        
+                        summary = "\n\n".join(summary_parts) if summary_parts else "No results found."
+                        
+                        # Build backlog from findings/problems/ideas
+                        backlog_items = []
+                        if insight.key_findings:
+                            backlog_items.extend([{"summary": f} for f in insight.key_findings])
+                        if insight.problems_identified:
+                            backlog_items.extend([{"summary": p.get('problem', '')} for p in insight.problems_identified])
+                        if insight.product_ideas:
+                            backlog_items.extend([{"summary": f"{idea.get('title', '')} — {idea.get('impact', '')}"} 
+                                                  for idea in insight.product_ideas])
+                        
+                        if backlog_items:
+                            state["backlog"] = backlog_items[:8]
+                        
+                        state.setdefault("summary_md", "")
+                        state["summary_md"] += "### Research Findings\n" + summary + "\n\n"
+                        
+                        # Get sources from insight if available
+                        if hasattr(insight, 'retrieved_sources') and insight.retrieved_sources:
+                            # Format sources: retrieved_sources has doc_id, chunk_id, text_preview
+                            sources_text = ", ".join([f"{os.path.basename(s.get('doc_id', 'unknown'))}" 
+                                                     for s in insight.retrieved_sources[:5]])
+                            state["summary_md"] += f"*Sources used:* {sources_text}\n\n"
+                        
+                        use_customer_agent = True
+            except Exception as e:
+                print(f"⚠️  Could not use NemotronDocumentAnalyzer: {e}")
+                use_customer_agent = False
+        
+        # Fallback to original approach if customer agent not used
+        if not use_customer_agent:
+            # ---- resolve source folders ----
+            def _resolve_sources(s):
+                if isinstance(s, str):
+                    s = [s]
+                elif not isinstance(s, list):
+                    s = []
+                data_root = os.path.abspath(os.path.join(_THIS_DIR, "..", "data"))
+                out = []
+                for p in s:
+                    if not os.path.isabs(p) and not p.startswith("."):
+                        p = os.path.join(data_root, p)
+                    out.append(os.path.abspath(p))
                 return out
 
-            corpus = _read_text_files(source_paths or [default_dir])
-            if not corpus:
-                raise RuntimeError(f"No research files found. Checked: {source_paths or [default_dir]}")
+            default_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "research"))
+            banking_dir = os.path.abspath(os.path.join(_THIS_DIR, "..", "data", "banking_corpus"))
+            
+            # Resolve sources and filter out non-existent directories
+            resolved = _resolve_sources(state.get("sources"))
+            source_paths = [p for p in resolved if os.path.isdir(p)]
+            
+            # If no valid sources found, use fallback directories
+            if not source_paths:
+                source_paths = [p for p in [default_dir, banking_dir] if os.path.isdir(p)]
 
-            files, texts = list(corpus.keys()), list(corpus.values())
-            try:
-                from sklearn.feature_extraction.text import TfidfVectorizer
-                from sklearn.metrics.pairwise import cosine_similarity
-                vec = TfidfVectorizer(max_features=8192)
-                X = vec.fit_transform(texts)
-                q = vec.transform([user_query])
-                sims = cosine_similarity(q, X)[0]
-            except Exception:
-                # ultra-safe lexical fallback
-                sims = np.array([len(t) for t in texts], dtype=float)
+            # ---- try vector DB iff it has embeddings ----
+            use_vectors, vecs = False, []
+            if os.path.isfile(index_path):
+                raw = Path(index_path).read_text(encoding="utf-8")
+                j = _json.loads(raw)
+                vecs = j.get("vectors") if isinstance(j, dict) else (j if isinstance(j, list) else [])
+                if vecs and isinstance(vecs[0], dict) and isinstance(vecs[0].get("embedding"), list) and vecs[0]["embedding"]:
+                    use_vectors = True  # only if we truly have embeddings
 
-            topk = np.argsort(sims)[::-1][:8]
-            for idx in topk:
-                retrieved.append({"source": files[idx], "text": texts[idx]})
-                legend.append({"source": files[idx], "score": float(sims[idx])})
+            retrieved, legend = [], []
 
-        # ---- build grounded prompt ----
-        blocks = []
-        for i, ch in enumerate(retrieved, 1):
-            snip = (ch["text"] or "").strip()
-            if len(snip) > 1200: snip = snip[:1200] + " ..."
-            blocks.append(f"[{i}] Source: {os.path.basename(ch['source'])}\n{snip}")
-        ctx = "\n\n".join(blocks) if blocks else "(no external context)"
+            if use_vectors:
+                # ---- vector mode (cosine to weighted centroid) ----
+                try:
+                    from sklearn.feature_extraction.text import TfidfVectorizer
+                    texts = [(v.get("text") or "") for v in vecs]
+                    tfidf = TfidfVectorizer(max_features=4096).fit(texts + [user_query])
+                    q_vec_lex = tfidf.transform([user_query]).toarray()[0]
+                    weights = tfidf.transform(texts).toarray() @ q_vec_lex
+                except Exception:
+                    weights = np.ones(len(vecs), dtype=float)
 
-        system_prompt = (
-            "You are a product research analyst. Using ONLY the provided context, do the following:\n"
-            "1) List 5 concrete problems/opportunities.\n"
-            "2) Propose 3 crisp product ideas.\n"
-            "Rules: Return markdown bullets, each starting with '- '. No preamble. Be concise."
-        )
-        user_msg = f"User query: {user_query}\n\nGrounded context (top {len(retrieved)} chunks):\n{ctx}"
+                M = max(5, min(50, len(vecs)))
+                idx_sorted = np.argsort(weights)[::-1][:M]
 
-        summary = nv_chat(
-            [{"role": "system", "content": system_prompt},
-             {"role": "user", "content": user_msg}],
-            max_tokens=700,
-        )
+                emb_dim = len(vecs[0]["embedding"])
+                centroid = np.zeros((emb_dim,), dtype=float)
+                total_w = 0.0
+                for i in idx_sorted:
+                    e = np.array(vecs[i]["embedding"], dtype=float)
+                    w = float(weights[i] + 1e-6)
+                    centroid += w * e
+                    total_w += w
+                if total_w > 0:
+                    centroid /= total_w
 
-        items = [{"summary": line.strip("- ").strip()} for line in summary.splitlines() if line.strip().startswith("-")][:8]
-        if items:
-            state["backlog"] = items
+                def _cos(a, b):
+                    na = np.linalg.norm(a); nb = np.linalg.norm(b)
+                    return 0.0 if na == 0 or nb == 0 else float(np.dot(a, b) / (na * nb))
 
-        def _legend_md(legend_list):
-            if not legend_list: return ""
-            parts = [f"{os.path.basename(x.get('source','unknown'))} ({x.get('score',0):.3f})" for x in legend_list[:5]]
-            return ", ".join(parts)
+                scores = []
+                for v in vecs:
+                    e = np.array(v.get("embedding") or [], dtype=float)
+                    scores.append(_cos(centroid, e) if e.size else 0.0)
 
-        state.setdefault("summary_md", "")
-        state["summary_md"] += "### Research Findings\n" + summary.strip() + "\n\n"
-        lg = _legend_md(legend)
-        if lg:
-            state["summary_md"] += f"*Sources used:* {lg}\n\n"
+                order = np.argsort(np.array(scores))[::-1][:8]
+                for i in order:
+                    v = vecs[int(i)]
+                    retrieved.append({"source": v.get("source") or v.get("id") or "unknown", "text": v.get("text", "")})
+                    legend.append({"source": v.get("source") or "unknown", "score": float(scores[int(i)])})
+
+            else:
+                # ---- TF-IDF fallback over files ----
+                from pathlib import Path
+                def _read_text_files(paths):
+                    out = {}
+                    for p in paths:
+                        if os.path.isdir(p):
+                            for root, _, files in os.walk(p):
+                                for fn in files:
+                                    if fn.lower().endswith((".txt", ".md")):
+                                        fp = os.path.join(root, fn)
+                                        try:
+                                            out[fp] = Path(fp).read_text(encoding="utf-8", errors="ignore")
+                                        except Exception:
+                                            pass
+                        elif os.path.isfile(p):
+                            try:
+                                out[p] = Path(p).read_text(encoding="utf-8", errors="ignore")
+                            except Exception:
+                                pass
+                    return out
+
+                corpus = _read_text_files(source_paths) if source_paths else {}
+                if not corpus and not use_vectors:
+                    # Only raise error if we're not using vectors
+                    raise RuntimeError(f"No research files found. Checked: {source_paths or [default_dir, banking_dir]}")
+
+                files, texts = list(corpus.keys()), list(corpus.values())
+                try:
+                    from sklearn.feature_extraction.text import TfidfVectorizer
+                    from sklearn.metrics.pairwise import cosine_similarity
+                    vec = TfidfVectorizer(max_features=8192)
+                    X = vec.fit_transform(texts)
+                    q = vec.transform([user_query])
+                    sims = cosine_similarity(q, X)[0]
+                except Exception:
+                    # ultra-safe lexical fallback
+                    sims = np.array([len(t) for t in texts], dtype=float)
+
+                topk = np.argsort(sims)[::-1][:8]
+                for idx in topk:
+                    retrieved.append({"source": files[idx], "text": texts[idx]})
+                    legend.append({"source": files[idx], "score": float(sims[idx])})
+
+            # ---- build grounded prompt (only if not using customer agent) ----
+            if not use_customer_agent:
+                blocks = []
+                for i, ch in enumerate(retrieved, 1):
+                    snip = (ch["text"] or "").strip()
+                    if len(snip) > 1200: snip = snip[:1200] + " ..."
+                    blocks.append(f"[{i}] Source: {os.path.basename(ch['source'])}\n{snip}")
+                ctx = "\n\n".join(blocks) if blocks else "(no external context)"
+
+                system_prompt = (
+                    "You are a product research analyst. Using ONLY the provided context, do the following:\n"
+                    "1) List 5 concrete problems/opportunities.\n"
+                    "2) Propose 3 crisp product ideas.\n"
+                    "Rules: Return markdown bullets, each starting with '- '. No preamble. Be concise."
+                )
+                user_msg = f"User query: {user_query}\n\nGrounded context (top {len(retrieved)} chunks):\n{ctx}"
+
+                summary = nv_chat(
+                    [{"role": "system", "content": system_prompt},
+                     {"role": "user", "content": user_msg}],
+                    max_tokens=700,
+                )
+
+                items = [{"summary": line.strip("- ").strip()} for line in summary.splitlines() if line.strip().startswith("-")][:8]
+                if items:
+                    state["backlog"] = items
+
+                def _legend_md(legend_list):
+                    if not legend_list: return ""
+                    parts = [f"{os.path.basename(x.get('source','unknown'))} ({x.get('score',0):.3f})" for x in legend_list[:5]]
+                    return ", ".join(parts)
+
+                state.setdefault("summary_md", "")
+                state["summary_md"] += "### Research Findings\n" + summary.strip() + "\n\n"
+                lg = _legend_md(legend)
+                if lg:
+                    state["summary_md"] += f"*Sources used:* {lg}\n\n"
 
     except Exception as e:
         state.setdefault("errors", []).append(f"research: {e}")
