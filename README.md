@@ -7,7 +7,7 @@ _A multi-agent product management copilot built with NVIDIA Nemotron + LangGraph
 
 ## 💡 Inspiration
 
-Sprintly was born from watching real product managers (including one of our teammates’ dad) spend countless hours on
+Sprintly was born from watching real product managers spend countless hours on
 coordination instead of creativity.
 
 We saw the same pattern over and over:
